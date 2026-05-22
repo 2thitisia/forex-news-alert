@@ -1,6 +1,6 @@
 """
-Forex News Email Alert — Free Version
-=====================================
+Forex News Email Alert — Free Version / Mobile Card Layout
+==========================================================
 
 ระบบนี้ทำงานแบบไม่เสียเงิน API:
 1) Morning Brief เวลา 07:00 ไทย
@@ -14,10 +14,9 @@ Forex News Email Alert — Free Version
    - GitHub Actions เช็กทุก 10 นาที
    - ส่งเมลเฉพาะเมื่อมีข่าวใกล้ออกประมาณ 8–15 นาที
    - ลดโอกาสส่งซ้ำ
-   - ไม่ใช้ Claude / OpenAI API
 
-แหล่งข่าว:
-- Forex Factory XML Calendar
+รูปแบบอีเมล:
+- ใช้ Card Layout อ่านง่ายบนมือถือ
 """
 
 import os
@@ -40,27 +39,17 @@ TARGET_IMPACTS = ["High", "Medium"]
 
 FOREX_FACTORY_XML = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
 
-# Forex Factory XML ชุดนี้ใช้เวลา UTC เป็นหลัก
 SOURCE_TZ = timezone.utc
-
-# เวลาไทย UTC+7
 ICT_TZ = timezone(timedelta(hours=7))
 
 
 # ================= TIME HELPERS =================
 
 def now_ict():
-    """เวลาปัจจุบันตามเวลาไทย"""
     return datetime.now(ICT_TZ)
 
 
 def parse_event_datetime(date_text, time_text):
-    """
-    แปลงวันที่/เวลาจาก Forex Factory XML เป็นเวลาไทย
-
-    date format: MM-DD-YYYY เช่น 05-22-2026
-    time format: 6:00am, 2:00pm, 12:30pm
-    """
     if not date_text or not time_text:
         return None
 
@@ -76,14 +65,12 @@ def parse_event_datetime(date_text, time_text):
         )
         source_dt = source_dt.replace(tzinfo=SOURCE_TZ)
         return source_dt.astimezone(ICT_TZ)
-
     except Exception as e:
         print(f"Could not parse datetime: date={date_text}, time={time_text}, error={e}")
         return None
 
 
 def is_same_ict_day(dt1, dt2):
-    """เช็กว่าเป็นวันเดียวกันตามเวลาไทยไหม"""
     return dt1.date() == dt2.date()
 
 
@@ -102,9 +89,6 @@ def format_ict_time(dt):
 # ================= RULE-BASED INTERPRETATION =================
 
 def classify_news(title):
-    """
-    แยกประเภทข่าวเพื่อสร้างกติกาอ่านข่าวเบื้องต้น
-    """
     t = title.lower()
 
     central_bank_keywords = [
@@ -225,9 +209,6 @@ def classify_news(title):
 
 
 def currency_effect_text(currency, direction):
-    """
-    direction = strong / weak
-    """
     if currency == "USD":
         if direction == "strong":
             return "USD แข็ง → USDJPY มีโอกาสขึ้น / GBPUSD มีโอกาสลง / XAUUSD มักถูกกดลง"
@@ -247,74 +228,71 @@ def currency_effect_text(currency, direction):
 
 
 def build_rule_interpretation(news):
-    """
-    สร้างคำอธิบายแบบ rule-based ไม่ใช้ AI
-    """
     currency = news["currency"]
     title = news["title"]
     news_type = classify_news(title)
 
     if news_type == "inflation":
         return f"""
-        <b>Rule:</b> ข่าวเงินเฟ้อ / ค่าแรง<br>
-        ถ้า <b>Actual สูงกว่า Forecast</b> → เงินเฟ้อ/ค่าแรงร้อนกว่าคาด → ธนาคารกลางอาจคงดอกสูงหรือลดดอกช้าลง → {currency_effect_text(currency, "strong")}<br>
+        <b>ข่าวเงินเฟ้อ / ค่าแรง</b><br>
+        ถ้า <b>Actual สูงกว่า Forecast</b> → เงินเฟ้อ/ค่าแรงร้อนกว่าคาด → ธนาคารกลางอาจคงดอกสูงหรือลดดอกช้าลง → {currency_effect_text(currency, "strong")}<br><br>
         ถ้า <b>Actual ต่ำกว่า Forecast</b> → เงินเฟ้อ/ค่าแรงเย็นลง → ธนาคารกลางอาจผ่อนคลายเร็วขึ้น → {currency_effect_text(currency, "weak")}
         """
 
     if news_type == "jobs_good_when_higher":
         return f"""
-        <b>Rule:</b> ข่าวจ้างงานที่ตัวเลขสูง = ดี<br>
-        ถ้า <b>Actual สูงกว่า Forecast</b> → ตลาดแรงงานแข็งแรง → {currency_effect_text(currency, "strong")}<br>
+        <b>ข่าวจ้างงานที่ตัวเลขสูง = ดี</b><br>
+        ถ้า <b>Actual สูงกว่า Forecast</b> → ตลาดแรงงานแข็งแรง → {currency_effect_text(currency, "strong")}<br><br>
         ถ้า <b>Actual ต่ำกว่า Forecast</b> → ตลาดแรงงานอ่อนกว่าคาด → {currency_effect_text(currency, "weak")}
         """
 
     if news_type == "jobs_bad_when_higher":
         return f"""
-        <b>Rule:</b> ข่าวแรงงานที่ตัวเลขสูง = แย่<br>
-        ถ้า <b>Actual สูงกว่า Forecast</b> → ว่างงาน/ขอรับสวัสดิการมากกว่าคาด → {currency_effect_text(currency, "weak")}<br>
+        <b>ข่าวแรงงานที่ตัวเลขสูง = แย่</b><br>
+        ถ้า <b>Actual สูงกว่า Forecast</b> → ว่างงาน/ขอรับสวัสดิการมากกว่าคาด → {currency_effect_text(currency, "weak")}<br><br>
         ถ้า <b>Actual ต่ำกว่า Forecast</b> → ตลาดแรงงานดีกว่าคาด → {currency_effect_text(currency, "strong")}
         """
 
     if news_type == "growth":
         return f"""
-        <b>Rule:</b> ข่าวเศรษฐกิจ / การเติบโต / PMI / ยอดขาย<br>
-        ถ้า <b>Actual สูงกว่า Forecast</b> → เศรษฐกิจแข็งแรงกว่าคาด → {currency_effect_text(currency, "strong")}<br>
+        <b>ข่าวเศรษฐกิจ / การเติบโต / PMI / ยอดขาย</b><br>
+        ถ้า <b>Actual สูงกว่า Forecast</b> → เศรษฐกิจแข็งแรงกว่าคาด → {currency_effect_text(currency, "strong")}<br><br>
         ถ้า <b>Actual ต่ำกว่า Forecast</b> → เศรษฐกิจอ่อนกว่าคาด → {currency_effect_text(currency, "weak")}
         """
 
     if news_type == "spending":
         return f"""
-        <b>Rule:</b> ข่าวรายได้/การใช้จ่ายผู้บริโภค<br>
-        ถ้า <b>Actual สูงกว่า Forecast</b> → การใช้จ่ายแข็งแรง → {currency_effect_text(currency, "strong")}<br>
+        <b>ข่าวรายได้/การใช้จ่ายผู้บริโภค</b><br>
+        ถ้า <b>Actual สูงกว่า Forecast</b> → การใช้จ่ายแข็งแรง → {currency_effect_text(currency, "strong")}<br><br>
         ถ้า <b>Actual ต่ำกว่า Forecast</b> → การใช้จ่ายอ่อนลง → {currency_effect_text(currency, "weak")}
         """
 
     if news_type == "central_bank":
         if currency == "JPY":
             return """
-            <b>Rule:</b> ข่าว BOJ / ญี่ปุ่น<br>
-            ถ้า BOJ พูด <b>hawkish</b> หรือส่งสัญญาณขึ้นดอก → JPY แข็ง → USDJPY / GBPJPY มีโอกาสลง<br>
-            ถ้า BOJ พูด <b>dovish</b> หรือยังไม่รีบขึ้นดอก → JPY อ่อน → USDJPY / GBPJPY มีโอกาสขึ้น<br>
+            <b>ข่าว BOJ / ญี่ปุ่น</b><br>
+            ถ้า BOJ พูด <b>hawkish</b> หรือส่งสัญญาณขึ้นดอก → JPY แข็ง → USDJPY / GBPJPY มีโอกาสลง<br><br>
+            ถ้า BOJ พูด <b>dovish</b> หรือยังไม่รีบขึ้นดอก → JPY อ่อน → USDJPY / GBPJPY มีโอกาสขึ้น<br><br>
             ถ้าเป็นข่าวแทรกแซงค่าเงิน → มักเป็นการซื้อ JPY → USDJPY มีโอกาสร่วงแรง
             """
 
         if currency == "GBP":
             return """
-            <b>Rule:</b> ข่าว BOE / อังกฤษ<br>
-            ถ้า BOE hawkish หรือขึ้นดอก/ลดดอกช้ากว่าคาด → GBP แข็ง → GBPUSD / GBPJPY มีโอกาสขึ้น<br>
+            <b>ข่าว BOE / อังกฤษ</b><br>
+            ถ้า BOE hawkish หรือขึ้นดอก/ลดดอกช้ากว่าคาด → GBP แข็ง → GBPUSD / GBPJPY มีโอกาสขึ้น<br><br>
             ถ้า BOE dovish หรือส่งสัญญาณลดดอก → GBP อ่อน → GBPUSD / GBPJPY มีโอกาสลง
             """
 
         return """
-        <b>Rule:</b> ข่าว Fed / FOMC / Powell<br>
-        ถ้า Fed hawkish หรือดอกสูงนานกว่าคาด → USD แข็ง → USDJPY มีโอกาสขึ้น / GBPUSD มีโอกาสลง<br>
+        <b>ข่าว Fed / FOMC / Powell</b><br>
+        ถ้า Fed hawkish หรือดอกสูงนานกว่าคาด → USD แข็ง → USDJPY มีโอกาสขึ้น / GBPUSD มีโอกาสลง<br><br>
         ถ้า Fed dovish หรือส่งสัญญาณลดดอก → USD อ่อน → USDJPY มีโอกาสลง / GBPUSD มีโอกาสขึ้น
         """
 
     return f"""
-    <b>Rule:</b> ข่าวทั่วไป<br>
-    โดยทั่วไปถ้า <b>Actual ดีกว่า Forecast</b> → {currency} มีโอกาสแข็ง<br>
-    ถ้า <b>Actual แย่กว่า Forecast</b> → {currency} มีโอกาสอ่อน<br>
+    <b>ข่าวทั่วไป</b><br>
+    โดยทั่วไปถ้า <b>Actual ดีกว่า Forecast</b> → {currency} มีโอกาสแข็ง<br><br>
+    ถ้า <b>Actual แย่กว่า Forecast</b> → {currency} มีโอกาสอ่อน<br><br>
     ให้ดู Actual เทียบ Forecast เป็นหลัก และดูว่าตลาดรับรู้ล่วงหน้าไปแล้วหรือยัง
     """
 
@@ -322,10 +300,6 @@ def build_rule_interpretation(news):
 # ================= FETCH NEWS =================
 
 def fetch_forex_factory_news():
-    """
-    ดึงข่าวจาก Forex Factory XML
-    กรอง USD / JPY / GBP และ High / Medium
-    """
     try:
         response = requests.get(
             FOREX_FACTORY_XML,
@@ -387,9 +361,6 @@ def fetch_forex_factory_news():
 # ================= FILTERS =================
 
 def get_today_news(news):
-    """
-    เอาเฉพาะข่าวของวันนี้ตามเวลาไทย
-    """
     current = now_ict()
     today_news = []
 
@@ -402,10 +373,6 @@ def get_today_news(news):
 
 
 def get_upcoming_news(news, min_minutes=8, max_minutes=15):
-    """
-    เอาข่าวที่กำลังจะออกในอีก 8–15 นาที
-    ตั้งแบบนี้เพื่อลดโอกาสส่งซ้ำ เพราะ GitHub รันทุก 10 นาที
-    """
     current = now_ict()
     upcoming = []
 
@@ -427,60 +394,79 @@ def get_upcoming_news(news, min_minutes=8, max_minutes=15):
 
 def impact_badge(impact):
     if impact == "High":
-        return (
-            '<span style="background:#e74c3c;color:white;'
-            'padding:3px 8px;border-radius:10px;font-size:11px;">'
-            '🔴 HIGH</span>'
-        )
+        return """
+        <span style="display:inline-block;background:#e74c3c;color:white;
+        padding:5px 10px;border-radius:999px;font-size:12px;font-weight:bold;">
+        🔴 HIGH
+        </span>
+        """
 
-    return (
-        '<span style="background:#f39c12;color:white;'
-        'padding:3px 8px;border-radius:10px;font-size:11px;">'
-        '🟠 MEDIUM</span>'
-    )
+    return """
+    <span style="display:inline-block;background:#f39c12;color:white;
+    padding:5px 10px;border-radius:999px;font-size:12px;font-weight:bold;">
+    🟠 MEDIUM
+    </span>
+    """
 
 
-def build_rows(news, show_countdown=False):
+def build_news_cards(news, show_countdown=False):
     if not news:
         return """
-        <tr>
-            <td colspan="8" style="padding:16px;text-align:center;color:#888;">
-                ไม่มีข่าวที่เข้าเงื่อนไข
-            </td>
-        </tr>
+        <div class="empty-card">
+            ไม่มีข่าวที่เข้าเงื่อนไข
+        </div>
         """
 
-    rows = ""
+    cards = ""
 
     for n in news:
-        countdown = ""
+        countdown_html = ""
         if show_countdown:
-            countdown = (
-                f"<br><span style='color:#e74c3c;font-weight:bold;'>"
-                f"อีกประมาณ {n.get('minutes_left', '-')} นาที"
-                f"</span>"
-            )
+            countdown_html = f"""
+            <div class="countdown">
+                ⏰ อีกประมาณ {n.get("minutes_left", "-")} นาที
+            </div>
+            """
 
-        rows += f"""
-        <tr>
-            <td>
-                <b>{n["date_ict"]}</b><br>
-                {n["time_ict"]} น. ไทย
-                {countdown}
-            </td>
-            <td><b>{n["currency"]}</b></td>
-            <td>{impact_badge(n["impact"])}</td>
-            <td><b>{n["title"]}</b></td>
-            <td>{n["actual"]}</td>
-            <td>{n["forecast"]}</td>
-            <td>{n["previous"]}</td>
-            <td style="font-size:12px;line-height:1.55;color:#444;">
+        cards += f"""
+        <div class="news-card">
+            <div class="card-top">
+                <div>
+                    <div class="currency">{n["currency"]}</div>
+                    <div class="event-title">{n["title"]}</div>
+                </div>
+                <div class="impact-wrap">
+                    {impact_badge(n["impact"])}
+                </div>
+            </div>
+
+            <div class="time-box">
+                🕒 {n["date_ict"]} เวลา {n["time_ict"]} น. ไทย
+                {countdown_html}
+            </div>
+
+            <div class="numbers">
+                <div class="num-box">
+                    <div class="num-label">Actual</div>
+                    <div class="num-value">{n["actual"]}</div>
+                </div>
+                <div class="num-box">
+                    <div class="num-label">Forecast</div>
+                    <div class="num-value">{n["forecast"]}</div>
+                </div>
+                <div class="num-box">
+                    <div class="num-label">Previous</div>
+                    <div class="num-value">{n["previous"]}</div>
+                </div>
+            </div>
+
+            <div class="rule-box">
                 {n["rule"]}
-            </td>
-        </tr>
+            </div>
+        </div>
         """
 
-    return rows
+    return cards
 
 
 def build_email(news, mode):
@@ -507,112 +493,230 @@ def build_email(news, mode):
         subtitle = "แจ้งเตือนข่าวที่กำลังจะออกในอีกประมาณ 8–15 นาที"
         show_countdown = True
 
-    rows = build_rows(news, show_countdown=show_countdown)
+    cards_html = build_news_cards(news, show_countdown=show_countdown)
 
     html = f"""
     <!DOCTYPE html>
     <html lang="th">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{
-                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 16px;
                 background: #f4f6f8;
-                padding: 20px;
-                color: #222;
+                color: #111827;
+                font-family: Arial, Helvetica, sans-serif;
             }}
+
             .container {{
-                max-width: 1200px;
-                margin: auto;
-                background: white;
-                border-radius: 12px;
-                overflow: hidden;
-                box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+                max-width: 720px;
+                margin: 0 auto;
             }}
+
             .header {{
                 background: #111827;
                 color: white;
+                border-radius: 16px;
                 padding: 22px;
+                margin-bottom: 16px;
             }}
+
             .header h1 {{
                 margin: 0;
-                font-size: 22px;
+                font-size: 24px;
+                line-height: 1.3;
             }}
+
             .header p {{
-                margin: 6px 0 0;
+                margin: 8px 0 0;
+                font-size: 14px;
+                color: #d1d5db;
+                line-height: 1.5;
+            }}
+
+            .summary {{
+                background: white;
+                border-radius: 14px;
+                padding: 14px 18px;
+                margin-bottom: 16px;
+                font-size: 14px;
+                color: #374151;
+                box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+            }}
+
+            .news-card {{
+                background: white;
+                border-radius: 16px;
+                padding: 18px;
+                margin-bottom: 16px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+                border: 1px solid #e5e7eb;
+            }}
+
+            .card-top {{
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+                align-items: flex-start;
+            }}
+
+            .currency {{
+                display: inline-block;
+                background: #eef2ff;
+                color: #3730a3;
                 font-size: 13px;
-                opacity: 0.85;
+                font-weight: bold;
+                padding: 4px 9px;
+                border-radius: 999px;
+                margin-bottom: 8px;
             }}
-            .content {{
-                padding: 22px;
+
+            .event-title {{
+                font-size: 19px;
+                font-weight: bold;
+                color: #111827;
+                line-height: 1.35;
             }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 13px;
+
+            .impact-wrap {{
+                white-space: nowrap;
+                text-align: right;
             }}
-            th {{
-                background: #f1f5f9;
-                text-align: left;
-                padding: 10px;
-                color: #555;
+
+            .time-box {{
+                margin-top: 14px;
+                background: #f9fafb;
+                border-left: 4px solid #2563eb;
+                padding: 10px 12px;
+                border-radius: 8px;
+                font-size: 14px;
+                color: #374151;
+                line-height: 1.5;
             }}
-            td {{
-                border-bottom: 1px solid #eee;
-                padding: 10px;
-                vertical-align: top;
+
+            .countdown {{
+                margin-top: 6px;
+                color: #dc2626;
+                font-weight: bold;
             }}
-            .note {{
-                margin-top: 18px;
+
+            .numbers {{
+                display: flex;
+                gap: 10px;
+                margin-top: 14px;
+            }}
+
+            .num-box {{
+                flex: 1;
+                background: #f3f4f6;
+                border-radius: 12px;
+                padding: 12px 10px;
+                text-align: center;
+            }}
+
+            .num-label {{
+                color: #6b7280;
+                font-size: 12px;
+                margin-bottom: 5px;
+                text-transform: uppercase;
+                letter-spacing: 0.4px;
+            }}
+
+            .num-value {{
+                font-size: 18px;
+                font-weight: bold;
+                color: #111827;
+            }}
+
+            .rule-box {{
+                margin-top: 14px;
                 background: #fff8e1;
-                border-left: 4px solid #ffc107;
-                padding: 12px;
-                font-size: 13px;
-                color: #555;
-                line-height: 1.6;
+                border-left: 4px solid #f59e0b;
+                padding: 12px 14px;
+                border-radius: 8px;
+                font-size: 14px;
+                color: #374151;
+                line-height: 1.65;
             }}
+
+            .note {{
+                background: white;
+                border-radius: 14px;
+                padding: 16px;
+                margin-top: 18px;
+                font-size: 14px;
+                color: #4b5563;
+                line-height: 1.6;
+                box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+            }}
+
+            .empty-card {{
+                background: white;
+                border-radius: 16px;
+                padding: 20px;
+                text-align: center;
+                color: #6b7280;
+                box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+            }}
+
             .footer {{
                 text-align: center;
-                color: #999;
+                color: #9ca3af;
                 font-size: 12px;
                 padding: 16px;
             }}
+
+            @media only screen and (max-width: 600px) {{
+                body {{
+                    padding: 10px;
+                }}
+
+                .header h1 {{
+                    font-size: 22px;
+                }}
+
+                .card-top {{
+                    display: block;
+                }}
+
+                .impact-wrap {{
+                    text-align: left;
+                    margin-top: 10px;
+                }}
+
+                .numbers {{
+                    display: block;
+                }}
+
+                .num-box {{
+                    margin-bottom: 10px;
+                }}
+            }}
         </style>
     </head>
+
     <body>
         <div class="container">
             <div class="header">
                 <h1>{title}</h1>
-                <p>{subtitle} | Generated at {now_text} ICT</p>
+                <p>{subtitle}<br>Generated at {now_text} ICT</p>
             </div>
 
-            <div class="content">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>วัน/เวลาไทย</th>
-                            <th>สกุลเงิน</th>
-                            <th>Impact</th>
-                            <th>ข่าว</th>
-                            <th>Actual</th>
-                            <th>Forecast</th>
-                            <th>Previous</th>
-                            <th>Rule-based view</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows}
-                    </tbody>
-                </table>
+            <div class="summary">
+                <b>สรุป:</b> ข่าวทั้งหมด {len(news)} รายการ · 🔴 High {high_count} · 🟠 Medium {medium_count}
+            </div>
 
-                <div class="note">
-                    <b>วิธีใช้:</b><br>
-                    1) ก่อนข่าวออก ให้ดู Forecast / Previous ไว้ก่อน<br>
-                    2) พอ Actual ออกแล้ว ให้เอาข่าวนั้นมาถาม ChatGPT ต่อ เช่น
-                    “USD CPI Actual สูงกว่า Forecast แบบนี้ USDJPY ควรขึ้นหรือลง”<br>
-                    3) Rule-based view เป็นกติกาเบื้องต้น ไม่ใช่คำแนะนำลงทุน
-                    และราคาจริงอาจสวนได้ถ้าตลาดรับรู้ข่าวล่วงหน้าแล้ว
-                </div>
+            {cards_html}
+
+            <div class="note">
+                <b>วิธีใช้:</b><br>
+                1) ก่อนข่าวออก ให้ดู Forecast / Previous ไว้ก่อน<br>
+                2) พอ Actual ออกแล้ว ให้เอาข่าวนั้นมาถาม ChatGPT ต่อ เช่น
+                “USD CPI Actual สูงกว่า Forecast แบบนี้ USDJPY ควรขึ้นหรือลง”<br>
+                3) Rule-based view เป็นกติกาเบื้องต้น ไม่ใช่คำแนะนำลงทุน
+                และราคาจริงอาจสวนได้ถ้าตลาดรับรู้ข่าวล่วงหน้าแล้ว
             </div>
 
             <div class="footer">
@@ -652,8 +756,6 @@ def main():
 
     all_news = fetch_forex_factory_news()
 
-    # ถ้ากด Run workflow เอง ให้ส่ง Morning Brief ของวันนี้ทันที
-    # เพื่อใช้ทดสอบว่า format ถูกต้อง
     is_manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
     if is_manual_run:
@@ -663,7 +765,6 @@ def main():
         send_email(subject, html)
         return
 
-    # ถ้ารันช่วง 07:00–07:09 ไทย ให้ส่ง Morning Brief
     if current.hour == 7 and current.minute < 10:
         print("Morning Brief time detected.")
         news_to_send = get_today_news(all_news)
@@ -671,7 +772,6 @@ def main():
         send_email(subject, html)
         return
 
-    # รอบอื่น ส่งเฉพาะข่าวที่กำลังจะออกในอีก 8–15 นาที
     news_to_send = get_upcoming_news(all_news, min_minutes=8, max_minutes=15)
 
     if not news_to_send:
