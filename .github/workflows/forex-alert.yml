@@ -2,9 +2,12 @@ name: Forex News Alert
 
 on:
   schedule:
-    - cron: "*/10 0-14 * * 1-5" # 07:00-21:50 ไทย ทุก 10 นาที
-    - cron: "0 15 * * 1-5"      # 22:00 ไทย
+    - cron: "*/5 0-14 * * 1-5"     # 07:00-21:55 ไทย ทุก 5 นาที
+    - cron: "0,5,10,15 15 * * 1-5" # 22:00-22:15 ไทย เพื่อรอ Actual หลังข่าว 22:00
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run:
@@ -13,6 +16,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,3 +33,13 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
         run: python main.py
+
+      - name: Commit sent events state
+        run: |
+          if [ -f sent_events.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add sent_events.json
+            git diff --cached --quiet || git commit -m "update sent events state"
+            git push
+          fi

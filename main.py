@@ -1,25 +1,29 @@
 """
-Forex News Email Alert — Free Version / Mobile Card Layout
+Forex News Email Alert — Free Version / Pre + Actual Alert
 ==========================================================
 
-ระบบนี้ทำงานแบบไม่เสียเงิน API:
-1) Morning Brief เวลา 07:00 ไทย
+ระบบนี้ไม่ใช้ Claude/OpenAI API จึงไม่เสียเงิน API
+
+ทำงาน:
+1) Morning Brief
+   - เวลา 07:00 ไทย
    - ส่งข่าว High / Medium ของวันนี้ทั้งหมด
    - เฉพาะ USD / JPY / GBP
-   - เวลาแสดงเป็นเวลาไทย
-   - มี Actual / Forecast / Previous
-   - มี Rule-based view เบื้องต้น
 
 2) Pre-news Alert
-   - GitHub Actions เช็กทุก 10 นาที
-   - ส่งเมลเฉพาะเมื่อมีข่าวใกล้ออกประมาณ 8–15 นาที
-   - ลดโอกาสส่งซ้ำ
+   - ส่งก่อนข่าวออกเฉพาะช่วง 1–10 นาที
+   - ถ้านานกว่านั้นยังไม่ส่ง
 
-รูปแบบอีเมล:
-- ใช้ Card Layout อ่านง่ายบนมือถือ
+3) Actual Released Alert
+   - หลังข่าวออก ถ้า Actual มีค่าแล้ว
+   - ส่งแจ้งเตือนอีกครั้งทันทีเท่าที่ GitHub Actions เช็กเจอ
+
+4) กันส่งซ้ำด้วย sent_events.json
 """
 
 import os
+import re
+import json
 import smtplib
 import requests
 import xml.etree.ElementTree as ET
@@ -39,8 +43,61 @@ TARGET_IMPACTS = ["High", "Medium"]
 
 FOREX_FACTORY_XML = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
 
+# Forex Factory XML ที่ใช้อยู่แสดงเวลาเป็น UTC
 SOURCE_TZ = timezone.utc
+
+# เวลาไทย UTC+7
 ICT_TZ = timezone(timedelta(hours=7))
+
+STATE_FILE = "sent_events.json"
+
+
+# ================= STATE / DUPLICATE CONTROL =================
+
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return {"sent": {}}
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"sent": {}}
+
+
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def mark_sent(state, key):
+    state.setdefault("sent", {})
+    state["sent"][key] = now_ict().strftime("%Y-%m-%d %H:%M:%S ICT")
+
+
+def was_sent(state, key):
+    return key in state.get("sent", {})
+
+
+def clean_old_state(state, keep_days=14):
+    """
+    ล้าง key เก่า ๆ เพื่อลดไฟล์บวม
+    """
+    sent = state.get("sent", {})
+    current = now_ict()
+    cleaned = {}
+
+    for key, value in sent.items():
+        try:
+            sent_time = datetime.strptime(value.replace(" ICT", ""), "%Y-%m-%d %H:%M:%S")
+            sent_time = sent_time.replace(tzinfo=ICT_TZ)
+            if (current - sent_time).days <= keep_days:
+                cleaned[key] = value
+        except Exception:
+            cleaned[key] = value
+
+    state["sent"] = cleaned
+    return state
 
 
 # ================= TIME HELPERS =================
@@ -50,6 +107,10 @@ def now_ict():
 
 
 def parse_event_datetime(date_text, time_text):
+    """
+    date format: MM-DD-YYYY เช่น 05-22-2026
+    time format: 6:00am, 2:00pm, 12:30pm
+    """
     if not date_text or not time_text:
         return None
 
@@ -65,6 +126,7 @@ def parse_event_datetime(date_text, time_text):
         )
         source_dt = source_dt.replace(tzinfo=SOURCE_TZ)
         return source_dt.astimezone(ICT_TZ)
+
     except Exception as e:
         print(f"Could not parse datetime: date={date_text}, time={time_text}, error={e}")
         return None
@@ -84,6 +146,39 @@ def format_ict_time(dt):
     if not dt:
         return "-"
     return dt.strftime("%H:%M")
+
+
+# ================= NEWS HELPERS =================
+
+def safe_text(value):
+    if value is None:
+        return "-"
+    value = str(value).strip()
+    if value == "":
+        return "-"
+    return value
+
+
+def has_actual_value(actual):
+    if actual is None:
+        return False
+
+    actual = str(actual).strip()
+
+    if actual == "":
+        return False
+
+    if actual in ["-", "—", "N/A", "n/a", "na", "NA"]:
+        return False
+
+    return True
+
+
+def make_event_id(news):
+    raw = f"{news['date_raw']}|{news['time_raw']}|{news['currency']}|{news['title']}"
+    raw = raw.lower()
+    raw = re.sub(r"[^a-z0-9]+", "-", raw)
+    return raw.strip("-")
 
 
 # ================= RULE-BASED INTERPRETATION =================
@@ -312,14 +407,14 @@ def fetch_forex_factory_news():
         news = []
 
         for event in root.findall("event"):
-            title = event.findtext("title", default="-")
-            currency = event.findtext("country", default="-")
-            date = event.findtext("date", default="-")
-            time_text = event.findtext("time", default="-")
-            impact = event.findtext("impact", default="-")
-            actual = event.findtext("actual", default="-")
-            forecast = event.findtext("forecast", default="-")
-            previous = event.findtext("previous", default="-")
+            title = safe_text(event.findtext("title", default="-"))
+            currency = safe_text(event.findtext("country", default="-"))
+            date = safe_text(event.findtext("date", default="-"))
+            time_text = safe_text(event.findtext("time", default="-"))
+            impact = safe_text(event.findtext("impact", default="-"))
+            actual = safe_text(event.findtext("actual", default="-"))
+            forecast = safe_text(event.findtext("forecast", default="-"))
+            previous = safe_text(event.findtext("previous", default="-"))
 
             if currency not in TARGET_CURRENCIES:
                 continue
@@ -338,11 +433,12 @@ def fetch_forex_factory_news():
                 "currency": currency,
                 "impact": impact,
                 "title": title,
-                "actual": actual or "-",
-                "forecast": forecast or "-",
-                "previous": previous or "-",
+                "actual": actual,
+                "forecast": forecast,
+                "previous": previous,
             }
 
+            item["event_id"] = make_event_id(item)
             item["rule"] = build_rule_interpretation(item)
             news.append(item)
 
@@ -372,9 +468,13 @@ def get_today_news(news):
     return today_news
 
 
-def get_upcoming_news(news, min_minutes=8, max_minutes=15):
+def get_pre_news_alerts(news, state, min_minutes=1, max_minutes=10):
+    """
+    ส่งก่อนข่าว 1–10 นาที
+    ถ้าเคยส่ง pre ของข่าวนี้แล้ว ไม่ส่งซ้ำ
+    """
     current = now_ict()
-    upcoming = []
+    alerts = []
 
     for n in news:
         dt = n["datetime_ict"]
@@ -384,10 +484,45 @@ def get_upcoming_news(news, min_minutes=8, max_minutes=15):
         minutes_left = (dt - current).total_seconds() / 60
 
         if min_minutes <= minutes_left <= max_minutes:
-            n["minutes_left"] = round(minutes_left)
-            upcoming.append(n)
+            key = f"pre:{n['event_id']}"
+            if was_sent(state, key):
+                continue
 
-    return upcoming
+            n["minutes_left"] = round(minutes_left)
+            n["sent_key"] = key
+            alerts.append(n)
+
+    return alerts
+
+
+def get_actual_released_alerts(news, state, max_minutes_after=20):
+    """
+    หลังข่าวออก ถ้า Actual มีค่าแล้ว ให้ส่ง Actual Released
+    เช็กภายใน 20 นาทีหลังข่าวออก
+    ถ้าเคยส่ง actual value นี้แล้ว ไม่ส่งซ้ำ
+    """
+    current = now_ict()
+    alerts = []
+
+    for n in news:
+        dt = n["datetime_ict"]
+        if not dt:
+            continue
+
+        minutes_after = (current - dt).total_seconds() / 60
+
+        if 0 <= minutes_after <= max_minutes_after and has_actual_value(n["actual"]):
+            actual_key_part = re.sub(r"[^a-zA-Z0-9_.%-]+", "-", str(n["actual"]))
+            key = f"actual:{n['event_id']}:{actual_key_part}"
+
+            if was_sent(state, key):
+                continue
+
+            n["minutes_after"] = round(minutes_after)
+            n["sent_key"] = key
+            alerts.append(n)
+
+    return alerts
 
 
 # ================= EMAIL HTML =================
@@ -409,7 +544,7 @@ def impact_badge(impact):
     """
 
 
-def build_news_cards(news, show_countdown=False):
+def build_news_cards(news, mode):
     if not news:
         return """
         <div class="empty-card">
@@ -420,11 +555,19 @@ def build_news_cards(news, show_countdown=False):
     cards = ""
 
     for n in news:
-        countdown_html = ""
-        if show_countdown:
-            countdown_html = f"""
+        timing_html = ""
+
+        if mode == "pre":
+            timing_html = f"""
             <div class="countdown">
-                ⏰ อีกประมาณ {n.get("minutes_left", "-")} นาที
+                ⏰ ข่าวจะออกในอีกประมาณ {n.get("minutes_left", "-")} นาที
+            </div>
+            """
+
+        elif mode == "actual":
+            timing_html = f"""
+            <div class="actual-released">
+                📢 Actual ออกแล้ว ประมาณ {n.get("minutes_after", "-")} นาทีหลังเวลาออกข่าว
             </div>
             """
 
@@ -442,11 +585,11 @@ def build_news_cards(news, show_countdown=False):
 
             <div class="time-box">
                 🕒 {n["date_ict"]} เวลา {n["time_ict"]} น. ไทย
-                {countdown_html}
+                {timing_html}
             </div>
 
             <div class="numbers">
-                <div class="num-box">
+                <div class="num-box actual-box">
                     <div class="num-label">Actual</div>
                     <div class="num-value">{n["actual"]}</div>
                 </div>
@@ -483,17 +626,24 @@ def build_email(news, mode):
         )
         title = "🌅 Forex Morning Brief"
         subtitle = "รวมข่าว High / Medium Impact เฉพาะวันนี้ ตามเวลาไทย"
-        show_countdown = False
-    else:
+
+    elif mode == "pre":
         subject = (
-            f"🚨 Forex Pre-News Alert | {now_text} ICT | "
+            f"🚨 Pre-News Alert | {now_text} ICT | "
             f"{len(news)} ข่าวใกล้ออก"
         )
-        title = "🚨 Forex Pre-News Alert"
-        subtitle = "แจ้งเตือนข่าวที่กำลังจะออกในอีกประมาณ 8–15 นาที"
-        show_countdown = True
+        title = "🚨 Pre-News Alert"
+        subtitle = "แจ้งเตือนก่อนข่าวออกเฉพาะช่วง 1–10 นาที"
 
-    cards_html = build_news_cards(news, show_countdown=show_countdown)
+    else:
+        subject = (
+            f"📢 Actual Released | {now_text} ICT | "
+            f"{len(news)} ข่าว Actual ออกแล้ว"
+        )
+        title = "📢 Actual Released Alert"
+        subtitle = "Actual ออกแล้ว ให้ดู Actual เทียบ Forecast ทันที"
+
+    cards_html = build_news_cards(news, mode=mode)
 
     html = f"""
     <!DOCTYPE html>
@@ -602,6 +752,12 @@ def build_email(news, mode):
                 font-weight: bold;
             }}
 
+            .actual-released {{
+                margin-top: 6px;
+                color: #16a34a;
+                font-weight: bold;
+            }}
+
             .numbers {{
                 display: flex;
                 gap: 10px;
@@ -614,6 +770,11 @@ def build_email(news, mode):
                 border-radius: 12px;
                 padding: 12px 10px;
                 text-align: center;
+            }}
+
+            .actual-box {{
+                background: #ecfdf5;
+                border: 1px solid #bbf7d0;
             }}
 
             .num-label {{
@@ -713,10 +874,10 @@ def build_email(news, mode):
             <div class="note">
                 <b>วิธีใช้:</b><br>
                 1) ก่อนข่าวออก ให้ดู Forecast / Previous ไว้ก่อน<br>
-                2) พอ Actual ออกแล้ว ให้เอาข่าวนั้นมาถาม ChatGPT ต่อ เช่น
+                2) หลัง Actual ออก ให้ดู Actual เทียบ Forecast เป็นหลัก<br>
+                3) ถ้าไม่มั่นใจ ให้คัดลอกข่าวมาถาม ChatGPT ต่อ เช่น
                 “USD CPI Actual สูงกว่า Forecast แบบนี้ USDJPY ควรขึ้นหรือลง”<br>
-                3) Rule-based view เป็นกติกาเบื้องต้น ไม่ใช่คำแนะนำลงทุน
-                และราคาจริงอาจสวนได้ถ้าตลาดรับรู้ข่าวล่วงหน้าแล้ว
+                4) Rule-based view เป็นกติกาเบื้องต้น ไม่ใช่คำแนะนำลงทุน
             </div>
 
             <div class="footer">
@@ -754,33 +915,76 @@ def main():
     print(f"Starting Forex Alert at {current.strftime('%d/%m/%Y %H:%M')} ICT")
     print("=" * 60)
 
+    state = load_state()
+    state = clean_old_state(state)
+
     all_news = fetch_forex_factory_news()
 
     is_manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
+    # Manual run = ส่ง Morning Brief เพื่อทดสอบเท่านั้น
+    # ไม่ mark state เพื่อไม่กันส่งจริงตอน 07:00
     if is_manual_run:
         print("Manual run detected. Sending today's Morning Brief for testing.")
         news_to_send = get_today_news(all_news)
         subject, html = build_email(news_to_send, mode="morning")
         send_email(subject, html)
+        save_state(state)
         return
 
-    if current.hour == 7 and current.minute < 10:
+    # Morning Brief 07:00–07:09 ไทย ส่งครั้งเดียวต่อวัน
+    morning_key = f"morning:{current.strftime('%Y-%m-%d')}"
+
+    if current.hour == 7 and current.minute < 10 and not was_sent(state, morning_key):
         print("Morning Brief time detected.")
         news_to_send = get_today_news(all_news)
         subject, html = build_email(news_to_send, mode="morning")
         send_email(subject, html)
+
+        mark_sent(state, morning_key)
+        save_state(state)
         return
 
-    news_to_send = get_upcoming_news(all_news, min_minutes=8, max_minutes=15)
+    # Post-news Actual Released มาก่อน
+    # ถ้า Actual ออกแล้วจะส่งทันทีที่ระบบเช็กเจอ
+    actual_alerts = get_actual_released_alerts(
+        all_news,
+        state,
+        max_minutes_after=20
+    )
 
-    if not news_to_send:
-        print("No upcoming news in 8–15 minutes. No email sent.")
+    if actual_alerts:
+        print(f"Found {len(actual_alerts)} actual released alerts.")
+        subject, html = build_email(actual_alerts, mode="actual")
+        send_email(subject, html)
+
+        for n in actual_alerts:
+            mark_sent(state, n["sent_key"])
+
+        save_state(state)
         return
 
-    subject, html = build_email(news_to_send, mode="alert")
-    send_email(subject, html)
-    print("Pre-news alert sent")
+    # Pre-news Alert เฉพาะก่อนข่าว 1–10 นาที
+    pre_alerts = get_pre_news_alerts(
+        all_news,
+        state,
+        min_minutes=1,
+        max_minutes=10
+    )
+
+    if pre_alerts:
+        print(f"Found {len(pre_alerts)} pre-news alerts.")
+        subject, html = build_email(pre_alerts, mode="pre")
+        send_email(subject, html)
+
+        for n in pre_alerts:
+            mark_sent(state, n["sent_key"])
+
+        save_state(state)
+        return
+
+    print("No morning / pre-news / actual alert conditions met. No email sent.")
+    save_state(state)
 
 
 if __name__ == "__main__":
