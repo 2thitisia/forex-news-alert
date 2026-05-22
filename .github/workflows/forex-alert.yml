@@ -2,7 +2,8 @@ name: Forex News Alert
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/30 0-14 * * 1-5" # 07:00-21:30 ไทย ทุก 30 นาที จันทร์-ศุกร์
+    - cron: "0 15 * * 1-5"      # 22:00 ไทย จันทร์-ศุกร์
   workflow_dispatch:
 
 jobs:
@@ -23,7 +24,6 @@ jobs:
 
       - name: Run script
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
