@@ -2,8 +2,8 @@ name: Forex News Alert
 
 on:
   schedule:
-    - cron: "*/5 0-14 * * 1-5"     # 07:00-21:55 ไทย ทุก 5 นาที
-    - cron: "0,5,10,15 15 * * 1-5" # 22:00-22:15 ไทย เพื่อรอ Actual หลังข่าว 22:00
+    - cron: "*/5 0-14 * * 1-5"
+    - cron: "0,5,10,15 15 * * 1-5"
   workflow_dispatch:
 
 permissions:
